@@ -1,0 +1,539 @@
+---
+title: "Projet Tristan THOMAS"
+author: "Tristan THOMAS"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# 1. Introduction
+
+En tant qu'étudiant en 5ème année de Pharmacie en parallèle de mon master en biostatistiques, l'exploration de l'écosystème professionnel de l'industrie pharmaceutique revêt une importance cruciale. Ce rapport documente une analyse statistique des offres d'emploi au sein de ce secteur, extraites de la plateforme LinkedIn. Cette initiative s'inscrit dans une démarche visant à acquérir une compréhension globale du marché de l'emploi dans l'industrie pharmaceutique, fusionnant ainsi mes compétences en pharmacie avec une expertise croissante en biostatistiques. Au-delà de l'exercice académique, ce projet éclairera ma vision professionnelle en affinant mes aspirations au sein de cet écosystème dynamique. De ce fait, il m'offre une perspective stratégique pour orienter ma trajectoire future dans l'industrie pharmaceutique.
+
+# 2. Scraping des données
+
+Les données sur les offres d'emploi ont été obtenues par des méthodes de scraping. Celles-ci ont été effectuées en Python à l'aide des librairies Requests, BeautifulSoup et Selenium. Les algorithmes précis utilisés pour cette étape ne sont pas détaillés ici car Python sort du cadre du projet, mais les étapes générales de la méthode sont décrites ci-dessous.
+
+## 2.1. Préparation manuelle des filtres de recherche
+
+La préparation des filtres de recherche a été une étape extrêmement chronophage et fastidieuse. En effet, une recherche d'emploi sur LinkedIn est limitée à 1000 résultats. Il est donc impossible de rechercher simplement toutes les offres d'emploi dans l'industrie pharmaceutique dans le monde pour les scraper directement. Au lieu de cela, il est nécessaire de combiner plusieurs filtres secondaires (pays par pays, région par région, voire bien souvent ville par ville) afin d'obtenir une liste de recherches faisant chacune moins de 1000 résultats. Les liens vers ces recherches ont été rassemblés dans des fichiers texte pour l'étape suivante.
+
+## 2.2. Scraping : récupération des id de chaque offre d'emploi
+
+Un programme en Python a été développé et utilise les librairies BeautifulSoup et Selenium. Il procède de la manière suivante :
+
+-   Ouverture de LinkedIn dans une nouvelle fenêtre de navigateur ;
+
+-   Clics et remplissage des champs automatisés afin de s'identifier avec un compte créé à l'occasion de ce projet ;
+
+-   Navigation automatique vers la page d'une des recherches précédemment élaborées ;
+
+-   Navigation successive entre chaque page de résultats et enregistrement de l'id de chaque offre d'emploi.
+
+Ces étapes sont répétées pour chacune des recherches mises au point dans la partie 2.1. Nous obtenons ainsi la liste de tous les id des offres d'emploi concernées, ce qui représente environ 117 000 offres.
+
+## 2.3. Scraping : récupération des informations sur chaque offre d'emploi
+
+Un second programme en Python a été développé et utilise les librairies Requests et BeautifulSoup. A partir de l'id d'une offre d'emploi, il permet d'extraire un certain nombre d'informations sur cette offre (détaillées dans la partie 3). En répétant cette opération sur chaque id précédemment extrait, nous obtenons un très large fichier csv (d'environ 500 Mo) contenant ces informations sur les 117 000 offres. Ce fichier constitue notre base de données pour ce projet.
+
+# 3. Import des librairies et des données
+
+```{r}
+library("tidyverse")
+library("cld3")
+library("gtranslate")
+library("stringi")
+```
+
+```{r}
+data = as_tibble(
+  read.csv(file = "all_europe_america.csv",
+           header = TRUE,
+           sep = ",",
+           na = c("", "NA", "Not Applicable"))
+  )
+data
+```
+
+Voici quelques informations sur les colonnes de ce dataset :
+
+-   job_id : l'id de l'offre d'emploi sur LinkedIn.
+-   company : le nom de l'entreprise.
+-   company_sectors : la liste des secteurs auxquels l'entreprise appartient.
+-   location : le continent, pays, région et/ou ville dans laquelle se situe l'offre d'emploi.
+-   date : l'ancienneté de l'offre d'emploi au moment de son extraction.
+-   job_title : l'intitulé de l'emploi.
+-   hierarchy : le niveau hiérarchique de l'emploi. Il peut prendre les valeurs suivantes :
+    -   "internship" : stagiaire
+    -   "entry level" : débutant
+    -   "mid-senior level" : milieu de carrière
+    -   "associate" : adjoint
+    -   "director" ou "executive" : directeur
+    -   "manager" : une seule offre a cette valeur, elle ne sera donc pas prise en compte.
+-   contract_type : le type de contrat de l'emploi. Il peut prendre les valeurs suivantes :
+    -   "full-time" : temps plein
+    -   "contract" ou "temporary" : contrat à durée déterminée
+    -   "part-time" : temps partiel
+    -   "internship" : stage
+    -   "volunteer" : bénévole
+    -   "other" : autre
+-   job_description : la description détaillée de l'offre d'emploi. Le recruteur est libre d'y indiquer ce qu'il souhaite, mais elle contient généralement des informations sur l'entreprise, les missions du poste et le profil demandé.
+
+# 4. Préparation des données
+
+A la fin de cette étape, nous voudrons obtenir les informations suivantes :
+
+-   Pays ;
+-   Secteur ;
+-   Type de contrat ;
+-   Niveau hiérarchique ;
+-   Diplômes requis en termes de niveau d'études : licence, master, doctorat, etc. ;
+-   Expérience minimale requise (en nombre d'années).
+
+## 4.1. Traduction
+
+Afin d'uniformiser la langue des intitulés et des descriptions de poste, leur traduction en anglais a été effectuée.
+
+La première étape est l'analyse des langues de ces deux colonnes (job_title et job_description), faite à l'aide de la librairie cld3 (Google's Compact Language Detector 3). Deux nouvelles colonnes sont créées (language_title et language_description) contenant le code de la langue détectée.
+
+Le temps d'exécution de ce code étant long, il n'est pas compilé dans ce document.
+
+```{r, eval = FALSE}
+data = data |>
+  mutate(
+    language_title = cld3::detect_language(job_title),
+    language_description = cld3::detect_language(job_description)
+  )
+```
+
+Sont ensuite traduits en anglais (à l'aide du package gtranslate) tous les intitulés et les descriptions qui ne sont pas en anglais et qui ne valent pas NA. NA est la valeur retournée par le package cld3 lorsqu'aucun langage n'est détecté avec une précision suffisante.
+
+Là encore, le temps d'exécution de ce code est particulièrement long, il n'est donc pas compilé dans ce document.
+
+```{r, eval = FALSE}
+data = data |>
+  mutate(
+    job_title = ifelse(
+      !is.na(job_title) & !is.na(language_title) & language_title != "en",
+      gtranslate::translate(job_title, to = "en"),
+      job_title
+    ),
+    job_description = ifelse(
+      !is.na(job_description) & !is.na(language_description) & language_description != "en",
+      gtranslate::translate(job_description, to = "en"),
+      job_description
+    )
+  )
+```
+
+A la place, la traduction a été préalablement effectuée et le résultat a été exporté dans un nouveau fichier. On importe donc celui-ci.
+
+```{r}
+data = as_tibble(
+  read.csv(file = "all_europe_america_translated.csv",
+           header = TRUE,
+           sep = ",",
+           na = c("", "NA", "Not Applicable"))
+)
+data
+```
+
+## 4.2. Secteur de l'industrie pharmaceutique
+
+L'industrie pharmaceutique est divisée en plusieurs secteurs. Ils peuvent être globalement catégorisés comme suit :
+
+-   Recherche et Développement : de la recherche fondamentale (recherche du principe actif) jusqu'aux études cliniques (essais chez l'Homme) en passant par la galénique (préparation du principe actif en une forme pharmaceutique adaptée à l'administration) et les études pré-cliniques (essais chez l'animal) ;
+
+-   Production : mise en place, optimisation, gestion et surveillance des process de fabrication du médicament ;
+
+-   Marketing : études de marché et de positionnement du médicament par rapport aux concurrents, publicité ;
+
+-   Affaires médicales : information et communication scientifique et médicale, en étroite collaboration avec les autres professionnels de santé ;
+
+-   Affaires réglementaires : études de conformité des médicaments aux réglementations et aux normes gouvernementales. Rédaction des dossiers d'approbation des médicaments à destination des instutitions publiques ;
+
+-   Ressources humaines : recrutement, formation, rémunération, gestion des conflits, etc. ;
+
+-   Maintenance : assurance du bon fonctionnement et de la fiabilité des équipements et des installations de production ;
+
+-   IT : gestion, maintenance et amélioration des systèmes informatiques de l'entreprise.
+
+Dans l'idéal, une approche permettant de déterminer le secteur auquel appartient une offre serait une analyse de la description de l'annonce à l'aide d'un réseau de neurones. Toutefois, les contraintes de temps ne me permettent pas de mettre en place une telle méthode.
+
+A la place, l'approche suivante est utilisée :
+
+-   Pour chaque secteur, une liste de mots-clé est créée.
+
+-   Pour chaque secteur, une nouvelle colonne est créée dans le dataset, portant le nom de celui-ci :
+
+    -   Si au moins un mot-clé du secteur est contenu dans le titre de l'annonce, la cellule correspondante vaut TRUE ;
+
+    -   Sinon, elle vaut FALSE.
+
+Cette approche renvoie une grande proportion de faux négatifs (environ 60% de NA), mais donne déjà une bonne idée de la répartition des offres dans chaque secteur.
+
+```{r}
+# Mots-clés
+area_terms = list(
+  R_D = c("r&d", "research", "development", "clinical", "study", "trial", "biostatistic", "bioinformatic"),
+  production = c("production", "manufacturing", "quality", "supply chain", "weighing", "dosing"),
+  marketing = c("customer", "sales", "business", "sales representative", "selling", "business plan", "commercial", "marketplace"),
+  med_affairs = c("writer", "writing", "liaison", "medical affairs", "health economics", "pharmacovigilance"),
+  reg_affairs = c("regulatory", "registration", "documentation", "compliance"),
+  HR = c(" HR ", "human resources", "talent"),
+  maintenance = c("mechanic", "equipment", "maintenance", "electrician", "service work", "technician", "disruption"),
+  IT = c("informatics", "data manager", "server", "SQL", "SharePoint", "IT services", "backup", "virtualization", "database")
+)
+
+area_names = names(area_terms)
+
+# Fonction renvoyant les numéros de chaque pôle (1-8), NA sinon
+get_area = function(title, area_name) {
+  if (is.na(title)) {
+    return(FALSE)
+  }
+  terms = area_terms[[area_name]]
+  for (i in 1:length(terms)) {
+    if (grepl(terms[i], title, ignore.case = TRUE)) {
+      return(TRUE)
+    }
+  }
+  return(FALSE)
+}
+
+
+for (i in 1:length(area_names)) {
+  area_name = area_names[i]
+  data = data |>
+    rowwise() |>
+    mutate(!!area_name := get_area(job_title, area_name))
+}
+data
+```
+
+## 4.3. Diplôme minimal requis
+
+L'objectif de cette étape est de créer une nouvelle colonne "diploma" indiquant le type de diplôme minimal requis, parmi :
+
+-   "bachelor" (licence) ;
+
+-   "master" ;
+
+-   "phd" (incluant également les diplômes de pharmacien et de médecin, considérés comme équivalents au doctorat dans la majorité des pays) ;
+
+-   "general" (diplôme universitaire général, sans plus de précision).
+
+Pour ce faire, un ensemble de mots-clés correspondant à chacun de ces diplômes sont recherchés dans la description de l'emploi. La recherche est effectuée par ordre croissant d'années d'études et s'arrête au premier type de diplôme trouvé afin d'obtenir le minimum requis.
+
+```{r}
+diploma_terms = list(
+  bachelor = c("Bachelor", " BS ", " BSc "),
+  master = c("Master", "MSc"),
+  phd = c("PhD", "PharmaD", "PharmD", "Pharmacist Degree", " MD "),
+  general = c("University Degree")
+)
+diploma_names = names(diploma_terms)
+
+get_diploma = function(description) {
+  for (i in 1:length(diploma_names)) {
+    terms = diploma_terms[[diploma_names[i]]]
+    for (j in 1:length(terms)) {
+      if (grepl(terms[j], description, ignore.case = TRUE)) {
+        return(diploma_names[i])
+      }
+    }
+  }
+  return(NA)
+}
+
+data = data |>
+  rowwise() |>
+  mutate(diploma = get_diploma(job_description))
+data
+```
+
+## 4.4. Expérience minimale requise
+
+L'objectif de cette étape est de créer une nouvelle colonne "experience" indiquant le nombre d'années d'expérience minimal requis.
+
+Pour ce faire, la description de l'annonce est utilisée. La chaîne de caractères est d'abord renversée, puis on recherche, à l'aide de regex, "experience" à l'envers suivie d'un nombre dans les 30 caractères qui suivent. Opérer la recherche à l'envers permet de trouver la dernière occurrence de "experience" précédée par un nombre (car le mot "experience" peut se trouver plus haut dans la description de l'emploi et fausser le résultat).
+
+Pour résumer, la fonction suivante permet d'extraire de la description toutes les formulations du même acabit que "[...] 5 years of experience in [...]" et de retourner le nombre d'années demandé.
+
+```{r}
+get_experience = function(description) {
+  number = description |>
+    stri_reverse() |>
+    str_extract("ecneirepxe.{0,30}\\b(?:\\d+|eno|owt|eerht|ruof|evif|xis|neves|thgie|enin|net)\\b") |>
+    str_extract("\\b(?:\\d+|eno|owt|eerht|ruof|evif|xis|neves|thgie|enin|net)\\b")
+  
+  # Si le nombre est écrit en toutes lettres, on le transforme en chiffres
+  number_correspondence = c("eno" = "1", "owt" = "2", "eerht" = "3", "ruof" = "4",
+                            "evif" = "5", "xis" = "6", "neves" = "7", "thgie" = "8",
+                            "enin" = "9", "net" = "10")
+  
+  number = ifelse(number %in% names(number_correspondence), 
+                  number_correspondence[number], 
+                  number)
+  
+  number = as.integer(number)
+  
+  # Un recruteur ne peut raisonnablement pas demander plus de 15 ans d'expérience.
+  # Si le nombre trouvé est supérieur à 15 (ou égal à zéro, ce qui est impossible dans ce contexte),
+  # il n'est donc pas pris en compte.
+  number = ifelse(number == 0 | number > 15, 
+                  NA, 
+                  number)
+
+  return(number)
+}
+
+data = data |>
+  rowwise() |>
+  mutate(experience = get_experience(job_description))
+data
+```
+
+## 4.5. Extraction du pays
+
+Le pays où est localisé l'offre est un dernier paramètre crucial devant être extrait. Pour cela, nous partons de la colonne "location", qui peut par exemple être formatée de la sorte :
+
+-   "France"
+
+-   "Île-de-France, France"
+
+-   "Seine-et-Marne, Île-de-France, France"
+
+-   "75001, Paris, Île-de-France, France"
+
+Nous remarquons que, dans tous les cas, si nous formons un vecteur en séparant la chaîne avec les caratères ",", le dernier élément de ce vecteur correspond au pays.
+
+Toutefois, d'autres offres portent des dénominations plus vagues telles que "European Union". Celles-ci ne sont pas prises en compte et considérées comme NA.
+
+De plus, les Etats-Unis sont un cas particulier car le dernier élément n'est généralement pas "United States", mais plutôt un code à deux lettres représentant l'état. Ainsi, si un code à deux lettres est reconnu, "United States" est renvoyé.
+
+```{r}
+valid_countries = c("United States", "Canada", "Germany", "United Kingdom",
+                    "Spain", "France", "Ireland", "Italy", "Poland", "Switzerland",
+                    "Austria", "Bosnia and Herzegovina", "Bulgaria", "Cyprus",
+                    "Croatia", "Denmark", "Estonia", "Finland", "Georgia", "Greece",
+                    "Hungary", "Iceland", "Latvia", "Liechtenstein", "Lithuania",
+                    "Luxembourg", "North Macedonia", "Malta", "Moldova", "Monaco",
+                    "Montenegro", "Norway", "Netherlands", "Portugal", "Belgium",
+                    "Romania", "Serbia", "Slovakia", "Slovenia", "Sweden",
+                    "Czechia", "Turkey")
+
+get_country = function(location) {
+  country = tail(strsplit(location, ", ")[[1]], 1)
+  # Si un code à 2 lettres est reconnu, il s'agit du code d'un état des Etats-Unis.
+  if (nchar(country) == 2) {
+    return("United States")
+  }
+  if (country %in% valid_countries) {
+    return(country)
+  }
+  return(NA)
+}
+
+data = data |>
+  mutate(country = get_country(location))
+data
+```
+
+## 4.6. Nettoyage des colonnes
+
+La dernière étape est de conserver uniquement les colonnes nécessaires pour la suite de l'analyse. J'en profite également pour rassembler "director" et "executive" sous le même nom "director", ainsi que supprimer l'unique offre dont la hiérarchie vaut "manager".
+
+```{r}
+data = data |>
+  ungroup() |>
+  filter(is.na(hierarchy) | hierarchy != "Manager") |>
+  mutate(hierarchy = ifelse(hierarchy == "Executive", "Director", hierarchy)) |>
+  select(country, hierarchy, contract_type, R_D, production, marketing,
+         med_affairs, reg_affairs, HR, maintenance, IT, diploma, experience)
+data
+```
+
+# 5. Analyse des données
+
+Cette section constitue le volet visuel de notre exploration des offres d'emploi pharmaceutiques sur LinkedIn. Initialement, des graphiques globaux offriront une vue d'ensemble mondiale des tendances, suivis d'un zoom sur des pays spécifiques pour révéler des tendances locales. Ces graphiques guideront notre compréhension des dynamiques régionales des emplois dans l'industrie pharmaceutique.
+
+## 5.1. Tour d'horizon des colonnes à l'échelle mondiale
+
+### 5.1.1. Nombre d'offres total par pays
+
+```{r}
+data_filtered <- data |>
+  count(country) |>
+  filter(!is.na(country)) |>
+  arrange(desc(n)) |>
+  mutate(country = factor(country, levels = country)) |>
+  slice_head(n = 10)
+
+ggplot(data_filtered, aes(x = country, y = n)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Nombre d'offres d'emploi par pays (10 premiers pays)",
+       x = "Pays",
+       y = "Nombre d'offres") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Etant donné le nombre écrasant d'offres aux Etats-Unis, tous les pays d'Europe continentale sont regroupés en une seule catégorie "Europe".
+
+```{r}
+data_filtered = data |>
+  filter(!is.na(country)) |>
+  mutate(country = ifelse(country == "United States", country, "Europe")) |>
+  count(country)
+
+ggplot(data_filtered, aes(x = country, y = n)) +
+ geom_bar(stat = "identity", fill = "skyblue") +
+ labs(title = "Nombre d'offres d'emploi aux Etats-Unis et en Europe continentale",
+       x = "Région",
+       y = "Nombre d'offres") +
+ theme_minimal() +
+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### 5.1.2. Nombre d'offres par niveau hiérarchique
+
+```{r}
+data_filtered = data |>
+  count(hierarchy, name = "count")
+
+ggplot(data_filtered, aes(x = reorder(hierarchy, -count), y = count)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Nombre d'offres par niveau hiérarchique (échelle internationale)",
+       x = "Niveau hiérarchique",
+       y = "Nombre d'offres") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### 5.1.3. Nombre d'offres par type de contrat
+
+```{r}
+data_filtered = data |>
+  count(contract_type, name = "count")
+
+ggplot(data_filtered, aes(x = reorder(contract_type, -count), y = count)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Nombre d'offres par type de contrat (échelle internationale)",
+       x = "Type de contrat",
+       y = "Nombre d'offres") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### 5.1.4. Nombre d'offres dans chaque secteur
+
+```{r}
+occurrences = data |>
+  select(R_D, production, marketing, med_affairs,
+         reg_affairs, HR, maintenance, IT) |>
+  colSums()
+
+occurrences = tibble(area = names(occurrences),
+                     count = as.numeric(occurrences))
+
+ggplot(occurrences, aes(x = reorder(area, -count), y = count)) +
+  geom_bar(fill = "skyblue", stat = "identity") +
+  labs(title = "Nombre d'offres dans chaque secteur (échelle internationale)",
+       x = "Secteur",
+       y = "Nombre d'occurrences") +
+  theme_minimal()
+```
+
+### 5.1.5. Nombre d'offres par type de diplôme requis
+
+```{r}
+data_filtered = data |>
+  count(diploma, name = "count")
+
+ggplot(data_filtered, aes(x = reorder(diploma, -count), y = count)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Nombre d'offres par type de diplôme requis (échelle internationale)",
+       x = "Type de diplôme",
+       y = "Nombre d'offres") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### 5.1.6. Nombre d'offres par expérience minimale requise
+
+```{r}
+data_filtered = data |>
+  count(experience, name = "count")
+
+ggplot(data_filtered, aes(x = experience, y = count)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  scale_x_continuous(breaks = 1:14, labels = 1:14) +
+  labs(title = "Nombre d'offres par expérience minimale requise (échelle internationale)",
+       x = "Nombre d'années d'expérience",
+       y = "Nombre d'offres") +
+  theme_minimal()
+```
+
+## 5.2. Graphiques combinés
+
+### 5.2.1. Niveau hiérarchique en fonction du nombre d'années d'expérience
+
+```{r}
+# Extrêmement peu d'offres demandent 9 ans d'expérience ou plus, on ne les prend donc pas en compte.
+# On enlève également les stages.
+data_filtered = data |>
+  filter(experience %in% 1:8,
+         hierarchy != "Internship")
+
+ggplot(data_filtered, aes(x = experience, fill = hierarchy)) + 
+  geom_bar(position = "fill") +
+  scale_x_continuous(breaks = 1:8, labels = 1:8) +
+  labs(title = "Niveau hiérarchique en fonction de l'expérience (échelle internationale)",
+       x = "Nombre d'années d'expérience",
+       y = "Nombre d'offres relatif") +
+  theme_minimal()
+```
+
+### 5.2.2. Niveau hiérarchique en fonction du type de diplôme
+
+```{r}
+# On enlève les stages.
+data_filtered = data |>
+  filter(hierarchy != "Internship",
+         !is.na(diploma))
+
+ggplot(data_filtered, aes(x = diploma, fill = hierarchy)) + 
+  geom_bar(position = "fill") +
+  labs(title = "Niveau hiérarchique en fonction du type de diplôme (échelle internationale)",
+       x = "Type de diplôme",
+       y = "Nombre d'offres relatif") +
+  theme_minimal()
+```
+
+## 5.3. Echelle française
+
+### 5.3.1. Nombre d'offres dans chaque secteur
+
+```{r}
+occurrences = data |>
+  filter(country == "France") |>
+  select(R_D, production, marketing, med_affairs,
+         reg_affairs, HR, maintenance, IT) |>
+  colSums()
+
+occurrences = tibble(area = names(occurrences),
+                     count = as.numeric(occurrences))
+
+ggplot(occurrences, aes(x = reorder(area, -count), y = count)) +
+  geom_bar(fill = "skyblue", stat = "identity") +
+  labs(title = "Nombre d'offres dans chaque secteur (France)",
+       x = "Secteur",
+       y = "Nombre d'occurrences") +
+  theme_minimal()
+```
+
+# 6. Conclusion
+
+Ce projet d'analyse des offres d'emploi pharmaceutiques sur LinkedIn s'est avéré captivant et instructif. L'exploration des tendances mondiales m'a offert une perspective éclairante sur l'écosystème professionnel de l'industrie pharmaceutique. Cette expérience s'est avérée enrichissante, contribuant significativement à ma vision globale du marché de l'emploi dans ce secteur.
